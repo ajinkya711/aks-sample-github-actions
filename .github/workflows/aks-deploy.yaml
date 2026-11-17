@@ -1,0 +1,67 @@
+name: Build and Deploy to aks
+
+on:
+    push:
+        branches:
+            - main
+
+env:
+    IMAGE_NAME: sample-app
+
+jobs:
+    build-and-deploy:
+
+        runs-on: ubuntu-latest
+
+        steps:
+            
+        - name: Checkout Code
+          uses: actions/checkout@v4
+
+        - name: Azure Login
+          uses: azure/login@v2
+          with:
+            creds: |
+                {
+                    "clientId":"${{ secrets.AZURE_CLIENT_ID }}",
+                    "clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}",
+                    "subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+                    "tenantId":"${{ secrets.AZURE_TENANT_ID }}"
+                 }
+        
+        - name: Login to ACR
+          run: |
+            az acr login --name ${{ secrets.ACR_NAME }}
+        
+        - name: Build Docker Image
+          run: |
+            docker build \
+            -t ${{ secrets.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}             
+
+        - name: Push Docker Image
+          run: |
+            docker push \
+            ${{ secrets.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+        - name: Install Helm
+          uses: azure/setup-helm@v4
+
+        - name: Get AKS Credentials
+          run: |
+            az aks get-credentials \
+            --resource-group ${{ secrets.AKS_RESOURCE_GROUP }} \
+            --name ${{ secrets.AKS_CLUSTER_NAME }} \
+            --overwrite-existing
+        
+        - name: Deploy Using Helm
+          run: |
+            helm upgrade --install sample-app ./helm/sample-app \
+            --set image.repository=${{ secrets.ACR_NAME }}.azurecr.io/sample-app \
+            --set image.tag=${{ github.sha }} \
+            --namespace sample-app \
+            --create-namespace
+        
+        - name: Verify Deployment
+          run: |
+            kubectl rollout status deployment/sample-app \
+            -n sample-app            
